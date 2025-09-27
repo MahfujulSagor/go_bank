@@ -10,6 +10,17 @@ type CreateAccountRequest struct {
 	LastName  string `json:"last_name"`
 }
 
+type UpdateAccountBalanceRequest struct {
+	Balance float64 `json:"balance"`
+	Number  int64   `json:"number"`
+}
+
+type TransferRequest struct {
+	FromAccountNo int64   `json:"from_account_no"`
+	ToAccountNo   int64   `json:"to_account_no"`
+	Amount        float64 `json:"amount"`
+}
+
 type Account struct {
 	ID        int64     `json:"id"`
 	FirstName string    `json:"first_name"`

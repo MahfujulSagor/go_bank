@@ -3,6 +3,7 @@ package main
 import (
 	"database/sql"
 	"fmt"
+	"time"
 
 	_ "github.com/lib/pq"
 )
@@ -10,7 +11,8 @@ import (
 type Storage interface {
 	CreateAccount(*Account) (int64, error)
 	DeleteAccount(int64) (int64, error)
-	UpdateAccount(*Account) error
+	UpdateAccountBalance(int64, *Account) (int64, error)
+	TransferMoney(int64, int64, float64) error
 	GetAccounts() ([]*Account, error)
 	GetAccountByID(int64) (*Account, error)
 }
@@ -91,7 +93,86 @@ func (s *PostgresStorage) DeleteAccount(id int64) (int64, error) {
 
 	return id, nil
 }
-func (s *PostgresStorage) UpdateAccount(account *Account) error {
+func (s *PostgresStorage) UpdateAccountBalance(id int64, account *Account) (int64, error) {
+	// Check if account EXISTS
+	_, err := s.db.Query(`SELECT id FROM account WHERE id = $1`, id)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return 0, fmt.Errorf("account not found")
+		}
+		return 0, err
+	}
+
+	// Update account details
+	res, err := s.db.Exec(`UPDATE account SET 
+		balance = $1,
+		updated_at = $2
+		WHERE id = $3
+		AND number = $4`,
+		account.Balance,
+		time.Now().UTC(),
+		id,
+		account.Number,
+	)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return 0, fmt.Errorf("no rows updated")
+		}
+		return 0, err
+	}
+	rowsAffected, err := res.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+
+	if rowsAffected == 0 {
+		return 0, fmt.Errorf("no rows updated")
+	}
+	return id, nil
+}
+func (s *PostgresStorage) TransferMoney(fromAccountNo, toAccountNo int64, amount float64) error {
+	// Start a transaction
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	// Ensure to rollback the transaction in case of an error
+	defer func() {
+		if err != nil {
+			tx.Rollback()
+		} else {
+			tx.Commit()
+		}
+	}()
+
+	var fromBalance float64
+	err = tx.QueryRow(`SELECT balance FROM account WHERE number = $1 FOR UPDATE`, fromAccountNo).Scan(&fromBalance)
+	if err != nil {
+		return err
+	}
+	if fromBalance < amount {
+		return fmt.Errorf("insufficient funds")
+	}
+
+	var toBalance float64
+	err = tx.QueryRow(`SELECT balance FROM account WHERE number = $1 FOR UPDATE`, toAccountNo).Scan(&toBalance)
+	if err != nil {
+		return err
+	}
+
+	newFromBalance := fromBalance - amount
+	newToBalance := toBalance + amount
+
+	_, err = tx.Exec(`UPDATE account SET balance = $1, updated_at = CURRENT_TIMESTAMP WHERE number = $2`, newFromBalance, fromAccountNo)
+	if err != nil {
+		return err
+	}
+
+	_, err = tx.Exec(`UPDATE account SET balance = $1, updated_at = CURRENT_TIMESTAMP WHERE number = $2`, newToBalance, toAccountNo)
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
 func (s *PostgresStorage) GetAccountByID(id int64) (*Account, error) {
@@ -121,7 +202,8 @@ func (s *PostgresStorage) GetAccounts() ([]*Account, error) {
 	res, err := s.db.Query(`
 		SELECT id, first_name, last_name, number, balance, created_at, updated_at
 		FROM account
-		LIMIT 10`)
+		ORDER BY id ASC
+	`)
 	if err != nil {
 		return nil, err
 	}
