@@ -32,6 +32,7 @@ func (s *APIServer) Start() {
 
 	router.HandleFunc("/account", makeHTTPHandleFunc(s.handleAccount))
 	router.HandleFunc("/account/{id}", makeHTTPHandleFunc(s.handleGetAccountByID))
+	router.HandleFunc("/transfer", makeHTTPHandleFunc(s.handleTransfer))
 
 	log.Println("Starting server on:", s.Addr)
 	http.ListenAndServe(s.Addr, router)
