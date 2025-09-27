@@ -33,8 +33,9 @@ func (s *APIServer) Start() {
 
 	router.HandleFunc("/account", makeHTTPHandleFunc(s.handleAccount))
 	router.HandleFunc("/account/{id}", makeHTTPHandleFunc(s.handleGetAccountByID))
+	router.HandleFunc("/account/{id}", makeHTTPHandleFunc(s.handleAccount))
 
-	log.Println("Starting server on", s.Addr)
+	log.Println("Starting server on:", s.Addr)
 	http.ListenAndServe(s.Addr, router)
 }
 
@@ -44,8 +45,6 @@ func (s *APIServer) handleAccount(w http.ResponseWriter, r *http.Request) error 
 		return s.handleGetAccount(w, r)
 	case http.MethodPost:
 		return s.handleCreateAccount(w, r)
-	case http.MethodDelete:
-		return s.handleDeleteAccount(w, r)
 	default:
 		return fmt.Errorf("method not allwed %s", r.Method)
 	}
@@ -55,6 +54,9 @@ func (s *APIServer) handleAccount(w http.ResponseWriter, r *http.Request) error 
 // It retrieves all accounts from the storage and returns them as JSON.
 // Limited to 10 accounts for simplicity.
 func (s *APIServer) handleGetAccount(w http.ResponseWriter, r *http.Request) error {
+	if r.Method != http.MethodGet {
+		return writeJSON(w, http.StatusBadRequest, ApiError{Error: "method not allowed"})
+	}
 	accounts, err := s.store.GetAccounts()
 	if err != nil {
 		return writeJSON(w, http.StatusInternalServerError, ApiError{Error: "failed to get accounts"})
@@ -67,29 +69,45 @@ func (s *APIServer) handleGetAccount(w http.ResponseWriter, r *http.Request) err
 }
 
 func (s *APIServer) handleGetAccountByID(w http.ResponseWriter, r *http.Request) error {
-	idStr := mux.Vars(r)["id"]
-	if idStr == "" {
-		return writeJSON(w, http.StatusBadRequest, ApiError{Error: "missing account id"})
+	if r.Method == http.MethodGet {
+		if r.Method != http.MethodGet {
+			return writeJSON(w, http.StatusBadRequest, ApiError{Error: "method not allowed"})
+		}
+
+		idStr := mux.Vars(r)["id"]
+		if idStr == "" {
+			return writeJSON(w, http.StatusBadRequest, ApiError{Error: "missing account id"})
+		}
+
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil {
+			return writeJSON(w, http.StatusBadRequest, ApiError{Error: "invalid account id"})
+		}
+
+		account, err := s.store.GetAccountByID(id)
+		if err != nil {
+			return writeJSON(w, http.StatusInternalServerError, ApiError{Error: "failed to get account"})
+		}
+		if account == nil {
+			return writeJSON(w, http.StatusNotFound, ApiError{Error: "account not found"})
+		}
+
+		return writeJSON(w, http.StatusOK, account)
 	}
 
-	id, err := strconv.ParseInt(idStr, 10, 64)
-	if err != nil {
-		return writeJSON(w, http.StatusBadRequest, ApiError{Error: "invalid account id"})
+	if r.Method == http.MethodDelete {
+		return s.handleDeleteAccount(w, r)
 	}
 
-	account, err := s.store.GetAccountByID(id)
-	if err != nil {
-		return writeJSON(w, http.StatusInternalServerError, ApiError{Error: "failed to get account"})
-	}
-	if account == nil {
-		return writeJSON(w, http.StatusNotFound, ApiError{Error: "account not found"})
-	}
-
-	return writeJSON(w, http.StatusOK, account)
+	return writeJSON(w, http.StatusBadRequest, ApiError{Error: "method not allowed"})
 }
 
 // handleCreateAccount handles the POST /account request.
 func (s *APIServer) handleCreateAccount(w http.ResponseWriter, r *http.Request) error {
+	if r.Method != http.MethodPost {
+		return writeJSON(w, http.StatusBadRequest, ApiError{Error: "method not allowed"})
+	}
+
 	createAccountReq := &CreateAccountRequest{}
 	if err := json.NewDecoder(r.Body).Decode(createAccountReq); err != nil {
 		return writeJSON(w, http.StatusBadRequest, ApiError{Error: "invalid request payload"})
@@ -106,7 +124,31 @@ func (s *APIServer) handleCreateAccount(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *APIServer) handleDeleteAccount(w http.ResponseWriter, r *http.Request) error {
-	return nil
+	if r.Method != http.MethodDelete {
+		return writeJSON(w, http.StatusBadRequest, ApiError{Error: "method not allowed"})
+	}
+
+	idStr := mux.Vars(r)["id"]
+	if idStr == "" {
+		return writeJSON(w, http.StatusBadRequest, ApiError{Error: "missing account id"})
+	}
+
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		return writeJSON(w, http.StatusBadRequest, ApiError{Error: "invalid account id"})
+	}
+
+	deletedID, err := s.store.DeleteAccount(id)
+	if err != nil {
+		return writeJSON(w, http.StatusInternalServerError, ApiError{Error: "failed to delete account"})
+	}
+	if deletedID == 0 {
+		return writeJSON(w, http.StatusNotFound, ApiError{Error: "account not found"})
+	}
+
+	return writeJSON(w, http.StatusOK, map[string]int64{
+		"id": deletedID,
+	})
 }
 
 func (s *APIServer) handleTransfer(w http.ResponseWriter, r *http.Request) error {

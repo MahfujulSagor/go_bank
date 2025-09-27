@@ -9,7 +9,7 @@ import (
 
 type Storage interface {
 	CreateAccount(*Account) (int64, error)
-	DeleteAccount(int64) error
+	DeleteAccount(int64) (int64, error)
 	UpdateAccount(*Account) error
 	GetAccounts() ([]*Account, error)
 	GetAccountByID(int64) (*Account, error)
@@ -75,8 +75,21 @@ func (s *PostgresStorage) CreateAccount(account *Account) (int64, error) {
 	}
 	return id, nil
 }
-func (s *PostgresStorage) DeleteAccount(id int64) error {
-	return nil
+func (s *PostgresStorage) DeleteAccount(id int64) (int64, error) {
+	res, err := s.db.Query(`SELECT id FROM account WHERE id = $1`, id)
+	if err != nil {
+		return 0, err
+	}
+	if !res.Next() {
+		return 0, nil
+	}
+
+	_, err = s.db.Exec(`DELETE FROM account WHERE id = $1`, id)
+	if err != nil {
+		return 0, err
+	}
+
+	return id, nil
 }
 func (s *PostgresStorage) UpdateAccount(account *Account) error {
 	return nil
