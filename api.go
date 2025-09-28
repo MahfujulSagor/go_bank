@@ -4,8 +4,11 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"os"
 	"strconv"
+	"time"
 
+	jwt "github.com/golang-jwt/jwt/v5"
 	"github.com/gorilla/mux"
 )
 
@@ -31,7 +34,7 @@ func (s *APIServer) Start() {
 	router := mux.NewRouter()
 
 	router.HandleFunc("/account", makeHTTPHandleFunc(s.handleAccount))
-	router.HandleFunc("/account/{id}", makeHTTPHandleFunc(s.handleGetAccountByID))
+	router.HandleFunc("/account/{id}", withJWTAuth(makeHTTPHandleFunc(s.handleGetAccountByID)))
 	router.HandleFunc("/transfer", makeHTTPHandleFunc(s.handleTransfer))
 
 	log.Println("Starting server on:", s.Addr)
@@ -125,6 +128,14 @@ func (s *APIServer) handleCreateAccount(w http.ResponseWriter, r *http.Request) 
 	if err != nil {
 		return writeJSON(w, http.StatusInternalServerError, ApiError{Error: "failed to create accont"})
 	}
+
+	tokenStr, err := createJWT(account)
+	if err != nil {
+		return writeJSON(w, http.StatusInternalServerError, ApiError{Error: "failed to create jwt token"})
+	}
+
+	w.Header().Set("X-JWT-Token", tokenStr)
+
 	return writeJSON(w, http.StatusCreated, map[string]int64{
 		"id": id,
 	})
@@ -244,6 +255,50 @@ func writeJSON(w http.ResponseWriter, status int, v any) error {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	return json.NewEncoder(w).Encode(v)
+}
+
+// withJWTAuth is a middleware that checks for a valid JWT token in the request header.
+// It expects the token to be in the "X-JWT-Token" header.
+func withJWTAuth(f http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		tokenStr := r.Header.Get("X-JWT-Token")
+		token, err := validateJWT(tokenStr)
+		if err != nil || !token.Valid {
+			writeJSON(w, http.StatusUnauthorized, ApiError{Error: "unauthorized"})
+			return
+		}
+
+		f(w, r)
+	}
+}
+
+// validateJWT validates the JWT token using the secret from environment variable.
+// It returns the parsed token and an error if the token is invalid.
+func validateJWT(token string) (*jwt.Token, error) {
+	secret := os.Getenv("JWT_SECRET")
+	return jwt.Parse(token, func(t *jwt.Token) (interface{}, error) {
+		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, jwt.ErrTokenMalformed
+		}
+		return []byte(secret), nil
+	})
+}
+
+// createJWT creates a JWT token for the given account using the secret from environment variable.
+// It returns the token string and an error if something goes wrong.
+func createJWT(account *Account) (string, error) {
+	secret := os.Getenv("JWT_SECRET")
+	// Create the Claims
+	claims := &jwt.MapClaims{
+		"expiresAt":      jwt.NewNumericDate(time.Now().Add(24 * time.Hour)),
+		"issuedAt":       jwt.NewNumericDate(time.Now()),
+		"account_number": account.Number,
+	}
+
+	// Create token
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	// Sign token
+	return token.SignedString([]byte(secret))
 }
 
 // apiFunc is a function type that represents an API handler.
